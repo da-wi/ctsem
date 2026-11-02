@@ -694,8 +694,8 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
 }  
 
 standatalongobjects <- function() {
-  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y',#'nordinal_y','whichordinal_y',
-    'Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
+  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','nordbeta_y',
+    'Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y','whichordbeta_y')
   return(longobjects)
 }
 
@@ -760,7 +760,7 @@ standataFillTime <- function(standata, times, subject, maintainT0=FALSE){
     )
     
     nlong <- suppressWarnings(data.frame(nlong,long[1,!colnames(long) %in% c('subject','time')]))
-    nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)',colnames(nlong))] <- 0L
+    nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)|(^nordbeta)',colnames(nlong))] <- 0L
     nlong[,grep('^dokalman',colnames(nlong))] <- 1L
     nlong[,grep('^Y',colnames(nlong))] <- 99999
     nlong[,grep('^tdpreds',colnames(nlong))] <- 0
