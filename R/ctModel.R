@@ -23,7 +23,14 @@
 #' @param manifestNames n.manifest length vector of manifest variable names as they appear in the data structure, 
 #' without any _Tx time point suffix that may be present in wide data.  Defaults to Y1, Y2, etc.
 #' 
-#' @param manifesttype n.manifest length vector of manifest variable types,defaults to 0 for continuous vars, 1 for binary vars is also possible. 
+#' @param manifesttype n.manifest length vector of manifest variable types,defaults to 0 for continuous vars, 1 for binary vars is also possible.
+#' 2 specifies an ordered beta measurement model (Kubinec, 2023) for bounded variables with exact floor / ceiling values,
+#' such as visual analogue scales -- data must be rescaled to the 0 to 1 interval. The linear predictor
+#' (MANIFESTMEANS + LAMBDA * state) is on the logit scale. The corresponding diagonal MANIFESTVAR element sigma
+#' sets the beta precision as phi = 1 / sigma^2, and two cutpoint parameters per variable
+#' (ordbetacut1_<name> and the positive gap ordbetacutgap_<name>, so that cut2 = cut1 + gap) are added to PARS automatically.
+#' With intoverstates=TRUE (the default), each ordered beta observation is integrated over the predicted
+#' state distribution with adaptive Gauss-Hermite quadrature, instead of the extended Kalman linearisation used for binary data.
 #' 
 #' @param latentNames n.latent length vector of latent variable names 
 #' (used for naming parameters, defaults to eta1, eta2, etc).
@@ -216,6 +223,24 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     TIpredNames=c()
   }
   
+  #ordered beta manifests: add cutpoint parameters to PARS
+  if(length(manifesttype)!=n.manifest) stop('manifesttype must have length n.manifest')
+  if(!all(manifesttype %in% c(0,1,2))) stop('manifesttype must be 0 (continuous), 1 (binary) or 2 (ordered beta)')
+  ordbetaPARSrows <- matrix(0L, n.manifest, 2)
+  if(any(manifesttype==2)){
+    if(!type %in% c('ct','dt','stanct','standt')) stop('Ordered beta manifests (manifesttype=2) require type ct or dt')
+    if(is.null(PARS)) PARS <- c()
+    if(is.matrix(PARS)) PARS <- c(PARS)
+    for(mi in which(manifesttype==2)){
+      PARS <- c(PARS, paste0('ordbetacut1_',manifestNames[mi],'|param*2'),
+        paste0('ordbetacutgap_',manifestNames[mi],'|log1p_exp(param)*3'))
+      ordbetaPARSrows[mi,] <- c(length(PARS)-1L, length(PARS))
+    }
+    if(!silent) message('Ordered beta manifests: cutpoint parameters ',
+      paste0('ordbetacut1_',manifestNames[manifesttype==2],', ordbetacutgap_',manifestNames[manifesttype==2],collapse='; '),
+      ' added to PARS. Beta precision phi = 1 / MANIFESTVAR^2.')
+  }
+
   mats <- ctStanMatricesList()
   for(m in names(mats$base)){
     if(!exists(m, inherits = FALSE)) next
@@ -394,8 +419,8 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     `Tpoints`=Tpoints, `LAMBDA`=LAMBDA, `manifestNames`=manifestNames, `latentNames`=latentNames, 
     `TDpredNames`=TDpredNames, `TIpredNames`=TIpredNames, `T0VAR`=T0VAR, `T0MEANS`=T0MEANS, 
     `MANIFESTMEANS`=MANIFESTMEANS, `MANIFESTVAR`=MANIFESTVAR, `DRIFT`=DRIFT, `CINT`=CINT, 
-    `DIFFUSION`=DIFFUSION, `TDPREDEFFECT`=TDPREDEFFECT, `TDPREDMEANS`=TDPREDMEANS, `TDPREDVAR`=TDPREDVAR, `PARS`=PARS, 
-     `id`=id, `time`=time, `manifesttype`=manifesttype)
+    `DIFFUSION`=DIFFUSION, `TDPREDEFFECT`=TDPREDEFFECT, `TDPREDMEANS`=TDPREDMEANS, `TDPREDVAR`=TDPREDVAR, `PARS`=PARS,
+     `id`=id, `time`=time, `manifesttype`=manifesttype, `ordbetaPARSrows`=ordbetaPARSrows)
   
   
   

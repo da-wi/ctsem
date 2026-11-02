@@ -468,7 +468,8 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     subjectIDname=ctm$id,
     timeName=ctm$time,
     continuoustime=continuoustime,
-    manifesttype=ctmodelobj$manifesttype)
+    manifesttype=ctmodelobj$manifesttype,
+    ordbetaPARSrows=if(is.null(ctmodelobj$ordbetaPARSrows)) matrix(0L,n.manifest,2) else ctmodelobj$ordbetaPARSrows)
   class(out)<-'ctStanModel'
   
   out$tipredeffectscale <- 1

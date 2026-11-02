@@ -830,7 +830,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE)
     array[nobs_y[rowi]] int od = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
     array[nbinary_y[rowi] ] int o1d= whichbinary_y[rowi,1:nbinary_y[rowi]];
     array[ncont_y[rowi] ] int o0d= whichcont_y[rowi,1:ncont_y[rowi]];
-    
+    array[nordbeta_y[rowi] ] int o2d= whichordbeta_y[rowi,1:nordbeta_y[rowi]]; //observed ordered beta
+
     if(!full){
       o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
       o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
@@ -1130,13 +1131,14 @@ if(verbose > 1) print("b");
       
     } //end finite difference and initialization loop
   } //end measurement init
+  row_vector[nlatentpop] stateprior = state; //state at which syprior was computed, reference point for ordered beta linear predictor
       
   if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
 
  
   if(si > 0 && (nobs_y[rowi] > 0 || dosmoother)){   //if not just inits...
     if(intoverstates==1 || dosmoother==1) { //classic kalman
-      ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\')+ MANIFESTcov[o,o]; // add measurement error; 
+      ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\')+ MANIFESTcov[o,o] .* notordbetamask[o,o]; // add measurement error (ordered beta rows stay on the linear predictor scale);
       for(mi in 1:nmanifest){ 
         if(manifesttype[mi]==1 && (Y[rowi,mi] != 99999  || dosmoother==1)) ycov[mi,mi] += (1-syprior[mi]) .* (syprior[mi]);
       }
@@ -1185,9 +1187,50 @@ if(verbose > 1) print("b");
           " eJAx = ", eJAx,
           "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
        
-      K[,od] = mdivide_right_spd(etacov * Jy[od,]\', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
+      if(nordbeta_y[rowi] == 0){ //unchanged path when no ordered beta observations
+      K[,od] = mdivide_right_spd(etacov * Jy[od,]\', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od];
       etacov += -K[,od] * Jy[od,] * etacov; //cov update
       state +=  (K[,od] * err[od])\'; //state update
+      }
+      if(nordbeta_y[rowi] > 0){
+        if(ncont_y[rowi] + nbinary_y[rowi] > 0){ //gaussian / binary observations first
+          array[ncont_y[rowi] + nbinary_y[rowi]] int odg = append_array(o0d, o1d);
+          K[,odg] = mdivide_right_spd(etacov * Jy[odg,]\', makesym(ycov[odg,odg],verbose,1));
+          etacov += -K[,odg] * Jy[odg,] * etacov;
+          state +=  (K[,odg] * err[odg])\';
+        }
+        for(obi in 1:nordbeta_y[rowi]){ //then each ordered beta observation, sequentially (independent given states)
+          int obmi = o2d[obi];
+          real obk1 = PARS[ordbetapars[obmi,1],1];
+          real obk2 = obk1 + PARS[ordbetapars[obmi,2],1];
+          real obphi = 1 / MANIFESTcov[obmi,obmi];
+          vector[nlatentpop] obJ = Jy[obmi,]\';
+          real obetam = syprior[obmi] + Jy[obmi,] * (state - stateprior)\'; //linear predictor given updates so far
+          real obs2 = fmax(quad_form(makesym(etacov,verbose,1), obJ), 1e-10);
+          vector[3] obupd;
+          vector[nlatentpop] obgain;
+',if(ppchecking) '          Ygen[rowi,obmi] = ordbeta_rng(normal_rng(obetam, sqrt(obs2)), obk1, obk2, obphi); //exact draw from current predictive
+','
+          obupd = ordbetaupdate(',ifelse(gendata,'Ygen','Y'),'[rowi,obmi], obetam, obs2, obk1, obk2, obphi, ordbetaghx, ordbetaghlogw);
+          if(llsinglerow==0 || llsinglerow == rowi) llrow[rowi] += obupd[1];
+          obgain = etacov * obJ / obs2;
+          state += (obgain * (obupd[2] - obetam))\'; //posterior moments of states are exact given those of eta
+          etacov += (obupd[3] - obs2) * (obgain * obgain\');
+          etacov = makesym(etacov,verbose,1);
+        }
+      }
+    }
+
+    if(intoverstates==0 && nordbeta_y[rowi] > 0){ //sampled states: exact ordered beta likelihood
+      for(obi in 1:nordbeta_y[rowi]){
+        int obmi = o2d[obi];
+        real obk1 = PARS[ordbetapars[obmi,1],1];
+        real obk2 = obk1 + PARS[ordbetapars[obmi,2],1];
+        real obphi = 1 / MANIFESTcov[obmi,obmi];
+',if(ppchecking) '        Ygen[rowi,obmi] = ordbeta_rng(syprior[obmi], obk1, obk2, obphi);
+','
+        if(llsinglerow==0 || llsinglerow == rowi) llrow[rowi] += ordbetaloglik(',ifelse(gendata,'Ygen','Y'),'[rowi,obmi], syprior[obmi], obk1, obk2, obphi);
+      }
     }
     
     if(dosmoother==1) { //these could be improved by recomputing all state dependent pars, error covariances etc. at each step
@@ -1195,7 +1238,7 @@ if(verbose > 1) print("b");
       etab[2,rowi,] = state\';
       ycovb[1,rowi,,] = ycov;
       etacovb[2,rowi,,] = etacov;
-      ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov;
+      ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov .* notordbetamask;
       yb[2,rowi,o] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]\';
       for(manifesti in 1:nmanifest){ // compute new expectations for binary and ordinal variables, but just use predicted covariance
         if(manifesttype[manifesti]==1) yb[2,rowi,manifesti] = inv_logit( yb[2,rowi,manifesti] );
@@ -1269,7 +1312,29 @@ if(verbose > 1) print("b");
      ',paste0(collectsubmats(popmats=FALSE),collapse=' '),'
      if(sum(whenmat[1,1:5]) > 0 || statedep[1]) subj_T0MEANS[si,,1] = state\'; //t0means updated, other pars as per final time point
         }
-      
+
+    }
+    if(nordbetamanifests > 0){ //ordered beta: convert linear predictor moments to observation scale moments
+      int srj = rowi;
+      while(srj > 0 && subject[srj]==si){
+        if(dokalmanrows[srj]){
+          for(obmi in 1:nmanifest){
+            if(manifesttype[obmi]==2){
+              real obk1 = PARS[ordbetapars[obmi,1],1];
+              real obk2 = obk1 + PARS[ordbetapars[obmi,2],1];
+              real obphi = 1 / MANIFESTcov[obmi,obmi];
+              for(bi in 1:3){
+                vector[2] obmom = ordbetamoments(yb[bi,srj,obmi], ycovb[bi,srj,obmi,obmi], obk1, obk2, obphi, ordbetaghx, ordbetaghlogw);
+                yb[bi,srj,obmi] = obmom[1];
+                ycovb[bi,srj,obmi,] = rep_row_vector(0, nmanifest); //cross covariances on different scales not kept
+                ycovb[bi,srj,,obmi] = rep_vector(0, nmanifest);
+                ycovb[bi,srj,obmi,obmi] = obmom[2];
+              }
+            }
+          }
+        }
+        srj += -1;
+      }
     }
   } //end smoother
 
@@ -1347,7 +1412,110 @@ collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,33,21,22)){
 writemodel<-function(){
   paste0('
 functions{
-  
+
+  // ordered beta measurement model (Kubinec, 2023, Political Analysis), manifesttype 2.
+  // eta is the linear predictor on the logit scale, k1 < k2 are the cutpoints, phi the beta precision.
+  // P(y=0) = 1 - inv_logit(eta - k1); P(y=1) = inv_logit(eta - k2);
+  // 0 < y < 1: [inv_logit(eta - k1) - inv_logit(eta - k2)] * Beta(y | mu * phi, (1 - mu) * phi), mu = inv_logit(eta)
+  real ordbetaloglik(real y, real eta, real k1, real k2, real phi){
+    if(y <= 0) return log_inv_logit(k1 - eta);
+    if(y >= 1) return log_inv_logit(eta - k2);
+    {
+      real mu = fmin(fmax(inv_logit(eta), 1e-10), 1 - 1e-10);
+      //stable form of log(inv_logit(eta - k1) - inv_logit(eta - k2))
+      return log_inv_logit(eta - k1) + log_inv_logit(k2 - eta) + log1m_exp(k1 - k2) +
+        beta_lpdf(y | mu * phi, (1 - mu) * phi);
+    }
+  }
+
+  real ordbetalogpost(real y, real eta, real m, real s2, real k1, real k2, real phi){
+    return ordbetaloglik(y, eta, k1, k2, phi) - 0.5 * square(eta - m) / s2;
+  }
+
+  // Assumed density update for one ordered beta observation given eta ~ N(m, s2) from the filter prediction.
+  // Adaptive Gauss-Hermite quadrature centred on the posterior mode (damped Newton, finite differences).
+  // Returns: log predictive density of y, posterior mean of eta, posterior variance of eta.
+  vector ordbetaupdate(real y, real m, real s2, real k1, real k2, real phi, vector ghx, vector ghlogw){
+    int nn = rows(ghx);
+    real s = sqrt(s2);
+    real fd = 1e-4;
+    real c = m;
+    real d2;
+    real sh;
+    vector[nn] nodes;
+    vector[nn] lw;
+    vector[3] out;
+    if(y > 0 && y < 1){ //beta part is not log concave in its tails, so also try a start at logit(y)
+      real c2 = logit(y);
+      if(ordbetalogpost(y, c2, m, s2, k1, k2, phi) > ordbetalogpost(y, c, m, s2, k1, k2, phi)) c = c2;
+    }
+    for(it in 1:12){
+      real g0 = ordbetalogpost(y, c, m, s2, k1, k2, phi);
+      real gp = ordbetalogpost(y, c + fd, m, s2, k1, k2, phi);
+      real gm = ordbetalogpost(y, c - fd, m, s2, k1, k2, phi);
+      real d1 = (gp - gm) / (2 * fd);
+      real step;
+      int accepted = 0;
+      d2 = fmin((gp - 2 * g0 + gm) / square(fd), -1 / s2); //posterior at least as concave as the prior
+      step = fmin(fmax(-d1 / d2, -3 * s), 3 * s);
+      for(bt in 1:6){ //backtracking, only accept ascent steps
+        if(accepted == 0){
+          if(ordbetalogpost(y, c + step, m, s2, k1, k2, phi) >= g0) accepted = 1; else step *= 0.5;
+        }
+      }
+      if(accepted == 0) break;
+      c += step;
+      if(abs(step) < 1e-6 * s) break;
+    }
+    {
+      real g0 = ordbetalogpost(y, c, m, s2, k1, k2, phi);
+      real gp = ordbetalogpost(y, c + fd, m, s2, k1, k2, phi);
+      real gm = ordbetalogpost(y, c - fd, m, s2, k1, k2, phi);
+      d2 = fmin((gp - 2 * g0 + gm) / square(fd), -1 / s2);
+    }
+    sh = fmin(1 / sqrt(-d2), s);
+    nodes = c + sh * ghx;
+    for(j in 1:nn) lw[j] = ghlogw[j] + ordbetaloglik(y, nodes[j], k1, k2, phi) +
+      normal_lpdf(nodes[j] | m, s) - normal_lpdf(ghx[j] | 0, 1) + log(sh);
+    out[1] = log_sum_exp(lw);
+    {
+      vector[nn] p = exp(lw - out[1]);
+      out[2] = dot_product(p, nodes);
+      out[3] = fmax(dot_product(p, square(nodes - out[2])), 1e-10);
+    }
+    return out;
+  }
+
+  // mean and variance of an ordered beta observation when eta ~ N(m, s2), for predictions and plots
+  vector ordbetamoments(real m, real s2, real k1, real k2, real phi, vector ghx, vector ghlogw){
+    int nn = rows(ghx);
+    vector[2] out = rep_vector(0, 2);
+    real ey2 = 0;
+    for(j in 1:nn){
+      real eta = m + sqrt(fmax(s2, 0)) * ghx[j];
+      real p1 = inv_logit(eta - k2);
+      real pmid = inv_logit(eta - k1) - p1;
+      real mu = inv_logit(eta);
+      real w = exp(ghlogw[j]);
+      out[1] += w * (p1 + pmid * mu);
+      ey2 += w * (p1 + pmid * (mu * (1 - mu) / (1 + phi) + square(mu)));
+    }
+    out[2] = fmax(ey2 - square(out[1]), 1e-12);
+    return out;
+  }
+
+  real ordbeta_rng(real eta, real k1, real k2, real phi){
+    real u = uniform_rng(0, 1);
+    real p0 = 1 - inv_logit(eta - k1);
+    real p1 = inv_logit(eta - k2);
+    if(u < p0) return 0;
+    if(u < p0 + p1) return 1;
+    {
+      real mu = fmin(fmax(inv_logit(eta), 1e-10), 1 - 1e-10);
+      return fmin(fmax(beta_rng(mu * phi, (1 - mu) * phi), 1e-8), 1 - 1e-8);
+    }
+  }
+
   array[] int vecequals(array[] int a, int test, int comparison){ //do indices of a match test condition?
       array[size(a)] int check;
     for(i in 1:size(check)) check[i] = comparison ? (test==a[i]) : (test!=a[i]);
@@ -1679,7 +1847,13 @@ data {
   array[ndatapoints, nmanifest] int whichbinary_y; // index of which variables are observed and binary per observation
   array[ndatapoints] int ncont_y;  // number of observed continuous variables per observation
   array[ndatapoints, nmanifest] int whichcont_y; // index of which variables are observed and continuous per observation
- 
+  array[ndatapoints] int nordbeta_y;  // number of observed ordered beta variables per observation
+  array[ndatapoints, nmanifest] int whichordbeta_y; // index of which variables are observed and ordered beta per observation
+  array[nmanifest, 2] int ordbetapars; // PARS rows of first cutpoint and (positive) cutpoint gap, for ordered beta manifests
+  int nordbetanodes; // number of Gauss-Hermite nodes for ordered beta updates
+  vector[nordbetanodes] ordbetaghx; // probabilists Gauss-Hermite nodes
+  vector[nordbetanodes] ordbetaghlogw; // log weights, normalised to sum to one
+
   int intoverpop;
   array[',max(mats$all),'] int statedep;
   int choleskymats;
@@ -1731,7 +1905,15 @@ transformed data{
   array[nparams] int tieffectindices=rep_array(0,nparams);
   int ntieffects = 0;
   int dosmoother = savescores || savesubjectmatrices;
-  
+  vector[nmanifest] notordbeta; //1 for manifests that are not ordered beta
+  matrix[nmanifest,nmanifest] notordbetamask; //removes ordered beta measurement error from gaussian covariance terms
+  int nordbetamanifests = 0;
+  for(mi in 1:nmanifest){
+    notordbeta[mi] = manifesttype[mi]==2 ? 0 : 1;
+    if(manifesttype[mi]==2) nordbetamanifests += 1;
+  }
+  notordbetamask = notordbeta * notordbeta\';
+
   if(ntipred >0){
     for(pi in 1:nparams){
       if(sum(TIPREDEFFECTsetup[pi,]) > .5){
@@ -1740,7 +1922,7 @@ transformed data{
       }
     }
   }
-  
+
 }
 ',
 

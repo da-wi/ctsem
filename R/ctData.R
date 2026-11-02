@@ -177,13 +177,13 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
       if(length(out)==0) out<-rep(0,ctm$n.manifest)
       if(length(out)<ctm$n.manifest) out<-c(out,rep(0,ctm$n.manifest-length(out)))
       out}) )),nrow=c(nrow(datalong),ncol=ctm$n.manifest)),
-    # nordinal_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) 
-    #   length(x[ctm$manifesttype==2 & x!=99999]))),dim=nrow(datalong)),
-    # whichordinal_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
-    #   out<-as.numeric(which(ctm$manifesttype==2 & x!=99999)) #conditional on whichobs_y
-    #   if(length(out)==0) out<-rep(0,ctm$n.manifest)
-    #   if(length(out)<ctm$n.manifest) out<-c(out,rep(0,ctm$n.manifest-length(out)))
-    #   out}) )),nrow=c(nrow(datalong),ncol=ctm$n.manifest)),
+    nordbeta_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x)
+      length(x[ctm$manifesttype==2 & x!=99999]))),dim=nrow(datalong)),
+    whichordbeta_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
+      out<-as.numeric(which(ctm$manifesttype==2 & x!=99999)) #conditional on whichobs_y
+      if(length(out)==0) out<-rep(0,ctm$n.manifest)
+      if(length(out)<ctm$n.manifest) out<-c(out,rep(0,ctm$n.manifest-length(out)))
+      out}) )),nrow=c(nrow(datalong),ncol=ctm$n.manifest)),
     ncont_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) 
       length(x[(ctm$manifesttype==0) & x!=99999]))),dim=nrow(datalong)),
     whichcont_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
@@ -440,6 +440,28 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
     standata$nJyfinite <- as.integer(ctm$n.latent)
     standata$Jyfinite <- array(as.integer(1:ctm$n.latent))
   }
+
+  #ordered beta measurement setup
+  ordbetarows <- ctm$ordbetaPARSrows
+  if(is.null(ordbetarows)) ordbetarows <- matrix(0L,ctm$n.manifest,2)
+  if(any(ctm$manifesttype==2)){
+    for(mi in which(ctm$manifesttype==2)){
+      y <- datalong[,ctm$manifestNames[mi]]
+      y <- y[!is.na(y) & y!=99999]
+      if(any(y < 0 | y > 1)) stop(paste0('Ordered beta manifest ',ctm$manifestNames[mi],
+        ' has values outside 0 to 1 -- rescale, e.g. VAS / 100'))
+      if(any(ordbetarows[mi,] < 1)) stop(paste0('No cutpoint parameters found for ordered beta manifest ',
+        ctm$manifestNames[mi],' -- specify manifesttype in ctModel'))
+      mv <- ctm$pars[ctm$pars$matrix %in% 'MANIFESTVAR' & xor(ctm$pars$row %in% mi, ctm$pars$col %in% mi),]
+      if(nrow(mv) > 0 && !all(mv$value %in% 0)) stop(paste0('MANIFESTVAR off diagonals for ordered beta manifest ',
+        ctm$manifestNames[mi],' must be fixed to 0'))
+    }
+  }
+  standata$ordbetapars <- matrix(as.integer(ordbetarows),ctm$n.manifest,2)
+  gh <- ctOrdBetaGaussHermite(15)
+  standata$nordbetanodes <- length(gh$x)
+  standata$ordbetaghx <- array(gh$x)
+  standata$ordbetaghlogw <- array(log(gh$w))
   # } else{
   #   standata$nJyfinite <- 0L
   #   standata$Jyfinite <- integer()

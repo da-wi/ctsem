@@ -1,5 +1,12 @@
 # ctsem News
 
+## Development (ordered beta extension)
+
+- New measurement type `manifesttype = 2` in `ctModel()`: ordered beta (Kubinec, 2023) for bounded variables with exact floor and ceiling values, such as visual analogue scales rescaled to 0-1. Two cutpoint parameters per indicator (`ordbetacut1_<name>`, `ordbetacutgap_<name>`) are added to `PARS` automatically; the beta precision is `phi = 1 / MANIFESTVAR^2`.
+- With `intoverstates = TRUE`, each ordered beta observation is integrated over the predicted state distribution by adaptive Gauss-Hermite quadrature (15 nodes, centred on the posterior mode), giving the one-step predictive likelihood and the exact first two posterior moments of the states. Continuous and binary indicators at the same time point are updated first, as before; rows without ordered beta observations use the unchanged code path. With `intoverstates = FALSE` the exact ordered beta likelihood is used.
+- Filtered / smoothed predictions (`ctKalman()`) for ordered beta indicators are returned on the observation scale, and `ctGenerateFromFit()` draws ordered beta data.
+- New helpers `rordbeta()`, `dordbeta()` and `mordbeta()`.
+
 ## 29/6/2026
 ### 3.11.0
 
